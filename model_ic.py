@@ -62,7 +62,7 @@ def validation(model, testloader, criterion, device):
     return test_loss, accuracy
 
 # Define NN function
-def make_NN(n_hidden, n_epoch, labelsdict, lr, device, model_name, trainloader, validloader, train_data):
+def make_NN(n_hidden, n_epoch, labelsdict, lr, device, model_name, trainloader, validloader, train_data, freeze_feature_layers=False, optimizer_name='Adam'):
     # Import pre-trained NN model 
     model = getattr(models, model_name)(pretrained=True)
     
@@ -71,13 +71,26 @@ def make_NN(n_hidden, n_epoch, labelsdict, lr, device, model_name, trainloader, 
         param.requires_grad = False
         
     # Make classifier
-    n_in = next(model.classifier.modules()).in_features
-    n_out = len(labelsdict) 
-    model.classifier = NN_Classifier(input_size=n_in, output_size=n_out, hidden_layers=n_hidden)
+    n_out = len(labelsdict)
+
+    if model_name == 'densenet169':
+        n_in = next(model.classifier.modules()).in_features
+        model.classifier = NN_Classifier(input_size=n_in, output_size=n_out, hidden_layers=n_hidden)
+        if freeze_feature_layers:
+            for param in model.features.parameters():
+                param.requires_grad = False
+
+    elif model_name == 'vgg' or model_name == 'alexnet':
+        n_in = next(model.classifier[6].modules()).in_features
+        model.classifier[6] = NN_Classifier(input_size=n_in, output_size=n_out, hidden_layers=n_hidden)
     
     # Define criterion and optimizer
     criterion = nn.NLLLoss()
     optimizer = optim.Adam(model.classifier.parameters(), lr = lr)
+    if optimizer_name == 'AdamW':
+        optimizer = optim.AdamW(model.classifier.parameters(), lr = lr)
+    elif optimizer_name == 'SGD':
+        optimizer = optim.SGD(model.classifier.parameters(), lr = lr)
 
     model.to(device)
     start = time.time()
@@ -86,6 +99,10 @@ def make_NN(n_hidden, n_epoch, labelsdict, lr, device, model_name, trainloader, 
     steps = 0 
     running_loss = 0
     print_every = 40
+
+    validation_losses = []
+
+    test_loss, accuracy = 0, 0 
     for e in range(epochs):
         model.train()
         for images, labels in trainloader:
@@ -116,6 +133,7 @@ def make_NN(n_hidden, n_epoch, labelsdict, lr, device, model_name, trainloader, 
                       "Validation Accuracy: {:.3f}".format(accuracy/len(validloader)))
 
                 running_loss = 0
+                validation_losses.append(test_loss/len(validloader))
 
                 # Make sure training is back on
                 model.train()
@@ -132,7 +150,9 @@ def make_NN(n_hidden, n_epoch, labelsdict, lr, device, model_name, trainloader, 
     
     print('model:', model_name, '- hidden layers:', n_hidden, '- epochs:', n_epoch, '- lr:', lr)
     print(f"Run time: {(time.time() - start)/60:.3f} min")
-    return model
+    
+    # return model
+    return validation_losses, model
 
 # Define function to save checkpoint
 def save_checkpoint(model, path):
